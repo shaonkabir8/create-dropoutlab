@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**', 'chore/**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+        os: [ubuntu-latest]
+        include:
+          - node: '22'
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      - name: Install dependencies (if any)
+        run: npm install --ignore-scripts || true
+
+      - name: Smoke test CLI
+        run: |
+          node bin/cli.js --version
+          node bin/cli.js --help
+
+      - name: Unit + integration tests
+        run: npm test
+
+      - name: Scaffold smoke build
+        run: |
+          node bin/cli.js /tmp/ci-smoke --yes --no-git
+          cd /tmp/ci-smoke && node scripts/build.mjs
+          test -f /tmp/ci-smoke/dist/index.html
+          test -f /tmp/ci-smoke/dist/css/main.css
+          grep -q "<!DOCTYPE html>" /tmp/ci-smoke/dist/index.html
+          ! grep -q "@import" /tmp/ci-smoke/dist/css/main.css
+
+      - name: Verify no placeholder strings in scaffold
+        run: |
+          grep -r "<owner>" /tmp/ci-smoke || true
+          ! grep -rq "<owner>" /tmp/ci-smoke
+
+  preflight:
+    name: Publish preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: chmod +x bin/cli.js scripts/preflight.mjs scripts/stamp-version.mjs
+      - name: Run preflight check
+        run: node scripts/preflight.mjs
